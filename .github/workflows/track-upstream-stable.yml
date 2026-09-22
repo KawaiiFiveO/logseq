@@ -65,7 +65,7 @@ jobs:
           if git rebase --onto "$LATEST" "$CURRENT"; then
             echo "$LATEST" > UPSTREAM_STABLE
             git commit -am "chore: track upstream $LATEST"
-            git push --force-with-lease origin "rebase/$LATEST"
+            git push --force origin "rebase/$LATEST"
             echo 'conflict=false' >> "$GITHUB_OUTPUT"
           else
             git rebase --abort || true
@@ -127,6 +127,8 @@ jobs:
           invariants the patch has to keep.
           MD
           sed -i "s|@LATEST@|$LATEST|g; s|@CURRENT@|$CURRENT|g" /tmp/issue-body.md
+          gh label create upstream-rebase --force --color B60205 \
+            --description 'Upstream release needs the whitelist patch rebased by hand'
           gh issue create \
             --title "Upstream $LATEST needs a manual rebase" \
             --label upstream-rebase \
