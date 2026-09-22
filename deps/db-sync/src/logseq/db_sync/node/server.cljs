@@ -14,6 +14,7 @@
             [logseq.db-sync.node.storage :as storage]
             [logseq.db-sync.platform.core :as platform]
             [logseq.db-sync.platform.node :as platform-node]
+            [logseq.db-sync.worker.allowlist :as allowlist]
             [logseq.db-sync.worker.auth :as auth]
             [logseq.db-sync.worker.handler.sync :as sync-handler]
             [logseq.db-sync.worker.handler.ws :as ws-handler]
@@ -31,6 +32,7 @@
               ;; Node adapter serves snapshot transit stream without gzip to avoid
               ;; browser/adapter content-encoding mismatches during graph download.
               (aset "DB_SYNC_SNAPSHOT_STREAM_GZIP" "false")
+              (aset "DB_SYNC_ALLOWED_USERS" (:allowed-users cfg))
               (aset "COGNITO_ISSUER" (:cognito-issuer cfg))
               (aset "COGNITO_CLIENT_ID" (:cognito-client-id cfg))
               (aset "COGNITO_JWKS_URL" (:cognito-jwks-url cfg)))]
@@ -55,7 +57,8 @@
   (p/let [claims (auth/auth-claims request env)
           user-id (when claims (aget claims "sub"))
           db (aget env "DB")]
-    (if (string? user-id)
+    (if (and (string? user-id)
+             (allowlist/claims-allowed? env claims))
       (index/<user-has-access-to-graph? db graph-id user-id)
       false)))
 

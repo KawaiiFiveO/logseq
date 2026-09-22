@@ -1,0 +1,133 @@
+# Fork-only. Watches logseq/logseq for a new *stable* (non-prerelease) release and
+# rebases the whitelist patch onto it. See PATCH.md for what the patch must preserve.
+#
+# NOTE: `schedule` only fires from the repository's DEFAULT branch, so this fork's
+# default branch must be `whitelist` (gh repo edit --default-branch whitelist).
+name: track upstream stable
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the patch branch
+        uses: actions/checkout@v4
+        with:
+          ref: whitelist
+          fetch-depth: 0
+
+      - name: Resolve the newest upstream stable tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest="$(gh api 'repos/logseq/logseq/releases?per_page=100' \
+            --jq '[.[] | select(.prerelease == false and .draft == false)] | .[0].tag_name')"
+          if [ -z "$latest" ] || [ "$latest" = 'null' ]; then
+            echo 'could not resolve a stable upstream tag' >&2
+            exit 1
+          fi
+          current="$(tr -d ' \r\n' < UPSTREAM_STABLE)"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$current" ]; then
+            echo "up to date on $current"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "$current -> $latest"
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase the patch onto the new tag
+        id: rebase
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.upstream.outputs.latest }}
+          CURRENT: ${{ steps.upstream.outputs.current }}
+        run: |
+          set -uo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/logseq/logseq.git
+          git fetch --no-tags upstream tag "$CURRENT"
+          git fetch --no-tags upstream tag "$LATEST"
+          git checkout -B "rebase/$LATEST" whitelist
+          if git rebase --onto "$LATEST" "$CURRENT"; then
+            echo "$LATEST" > UPSTREAM_STABLE
+            git commit -am "chore: track upstream $LATEST"
+            git push --force-with-lease origin "rebase/$LATEST"
+            echo 'conflict=false' >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort || true
+            echo 'conflict=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the rebase PR
+        if: steps.rebase.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.upstream.outputs.latest }}
+          CURRENT: ${{ steps.upstream.outputs.current }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/pr-body.md <<'MD'
+          Rebased the whitelist patch from `@CURRENT@` onto `@LATEST@` with no conflicts.
+
+          Upstream compare: https://github.com/logseq/logseq/compare/@CURRENT@...@LATEST@
+
+          Before merging, confirm the patch still holds — see `PATCH.md`:
+
+          - `node/dispatch.cljs` still routes every non-public request through the gate
+          - `node/server.cljs`'s `access-allowed?` still checks the whitelist (the WebSocket path)
+          - `node/config.cljs` still reads `DB_SYNC_ALLOWED_USERS`
+
+          After merging: tag `@LATEST@-wl.1`, rebuild the image, and move the clients to the
+          matching stable release.
+          MD
+          sed -i "s|@LATEST@|$LATEST|g; s|@CURRENT@|$CURRENT|g" /tmp/pr-body.md
+          gh pr create \
+            --base whitelist \
+            --head "rebase/$LATEST" \
+            --title "chore: track upstream $LATEST" \
+            --body-file /tmp/pr-body.md
+
+      - name: Open a conflict issue
+        if: steps.rebase.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.upstream.outputs.latest }}
+          CURRENT: ${{ steps.upstream.outputs.current }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/issue-body.md <<'MD'
+          Rebasing the whitelist patch from `@CURRENT@` onto `@LATEST@` hit conflicts, so
+          nothing was pushed.
+
+          Upstream compare: https://github.com/logseq/logseq/compare/@CURRENT@...@LATEST@
+
+          Locally:
+
+          ```bash
+          git fetch --no-tags upstream tag @LATEST@
+          git checkout whitelist
+          git rebase --onto @LATEST@ @CURRENT@
+          ```
+
+          then hand it to Claude Code: `/update-fork @LATEST@`. `PATCH.md` lists the
+          invariants the patch has to keep.
+          MD
+          sed -i "s|@LATEST@|$LATEST|g; s|@CURRENT@|$CURRENT|g" /tmp/issue-body.md
+          gh issue create \
+            --title "Upstream $LATEST needs a manual rebase" \
+            --label upstream-rebase \
+            --body-file /tmp/issue-body.md

@@ -4,6 +4,7 @@
             [logseq.db-sync.node.graph :as graph]
             [logseq.db-sync.node.routes :as node-routes]
             [logseq.db-sync.platform.core :as platform]
+            [logseq.db-sync.worker.allowlist :as allowlist]
             [logseq.db-sync.worker.handler.assets :as assets-handler]
             [logseq.db-sync.worker.handler.index :as index-handler]
             [logseq.db-sync.worker.handler.sync :as sync-handler]
@@ -18,7 +19,7 @@
          (seq expected)
          (= expected actual))))
 
-(defn handle-node-fetch
+(defn- dispatch-fetch
   [{:keys [request env registry deps]}]
   (let [url (platform/request-url request)
         path (.-pathname url)
@@ -74,3 +75,23 @@
 
       :else
       (http/not-found))))
+
+(defn- public-request?
+  "Requests that bypass the user allowlist: the health probe, CORS preflight
+  (which carries no data) and operator requests holding the admin token."
+  [request env path method]
+  (or (= path "/health")
+      (= method "OPTIONS")
+      (admin-token-valid? request env)))
+
+(defn handle-node-fetch
+  [{:keys [request env] :as opts}]
+  (let [url (platform/request-url request)
+        path (.-pathname url)
+        method (.-method request)]
+    (if (public-request? request env path method)
+      (dispatch-fetch opts)
+      (p/let [allowed? (allowlist/<request-allowed? request env)]
+        (if allowed?
+          (dispatch-fetch opts)
+          (http/forbidden))))))
