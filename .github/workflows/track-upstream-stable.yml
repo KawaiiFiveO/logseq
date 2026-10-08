@@ -95,14 +95,25 @@ jobs:
 
           Upstream compare: https://github.com/logseq/logseq/compare/@CURRENT@...@LATEST@
 
-          Before merging, confirm the patch still holds — see `PATCH.md`:
+          **Do not merge this PR.** The branch is a rebase, not a descendant of `whitelist`,
+          so GitHub reports conflicts (at least the add/add on `UPSTREAM_STABLE`) and a merge
+          would duplicate the patch commits. It exists for review and CI only.
+
+          Before landing, confirm the patch still holds — see `PATCH.md`:
 
           - `node/dispatch.cljs` still routes every non-public request through the gate
           - `node/server.cljs`'s `access-allowed?` still checks the whitelist (the WebSocket path)
           - `node/config.cljs` still reads `DB_SYNC_ALLOWED_USERS`
 
-          After merging: tag `@LATEST@-wl.1`, rebuild the image, and move the clients to the
-          matching stable release.
+          To land it, replace `whitelist` with this branch (this closes the PR as merged):
+
+          ```bash
+          git fetch origin
+          git push --force-with-lease=whitelist origin origin/rebase/@LATEST@:whitelist
+          ```
+
+          Then tag `@LATEST@-wl.1`, rebuild the image, and move the clients to the matching
+          stable release.
           MD
           sed -i "s|@LATEST@|$LATEST|g; s|@CURRENT@|$CURRENT|g" /tmp/pr-body.md
           gh pr create \

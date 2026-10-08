@@ -4,8 +4,11 @@
 name: fork/db-sync CI
 
 on:
+  # rebase/** too: track-upstream-stable's rebase PRs always conflict with whitelist
+  # (they replace it rather than merge into it), and GitHub skips pull_request runs
+  # on a conflicting PR, so the push is the only automatic trigger they get.
   push:
-    branches: [whitelist]
+    branches: [whitelist, 'rebase/**']
     paths:
       - 'deps/db-sync/**'
       - 'deps/common/**'
