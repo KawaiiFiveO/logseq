@@ -24,6 +24,10 @@ jobs:
         with:
           ref: whitelist
           fetch-depth: 0
+          # GITHUB_TOKEN can never push commits that touch .github/workflows/, and
+          # upstream releases routinely do. FORK_SYNC_TOKEN is a fine-grained PAT on this
+          # repo with Contents, Workflows, Pull requests and Issues set to read/write.
+          token: ${{ secrets.FORK_SYNC_TOKEN }}
 
       - name: Resolve the newest upstream stable tag
         id: upstream
@@ -64,8 +68,8 @@ jobs:
           git checkout -B "rebase/$LATEST" whitelist
           if git rebase --onto "$LATEST" "$CURRENT"; then
             echo "$LATEST" > UPSTREAM_STABLE
-            git commit -am "chore: track upstream $LATEST"
-            git push --force origin "rebase/$LATEST"
+            git commit -am "chore: track upstream $LATEST" || exit 1
+            git push --force origin "rebase/$LATEST" || exit 1
             echo 'conflict=false' >> "$GITHUB_OUTPUT"
           else
             git rebase --abort || true
@@ -75,7 +79,9 @@ jobs:
       - name: Open the rebase PR
         if: steps.rebase.outputs.conflict == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The PAT, not GITHUB_TOKEN: PRs opened by GITHUB_TOKEN don't trigger
+          # fork-db-sync-ci, and the PR needs that run before merging.
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
           LATEST: ${{ steps.upstream.outputs.latest }}
           CURRENT: ${{ steps.upstream.outputs.current }}
         run: |
