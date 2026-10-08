@@ -18,6 +18,10 @@ permissions:
 jobs:
   track:
     runs-on: ubuntu-latest
+    env:
+      # The rebase step adds an `upstream` remote, and gh prefers that over `origin`
+      # when picking the repo, so without this it targets logseq/logseq.
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Checkout the patch branch
         uses: actions/checkout@v4
